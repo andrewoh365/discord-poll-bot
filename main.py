@@ -107,7 +107,7 @@ class PollModal(discord.ui.Modal, title="Create Poll"):
         await poll_message.edit(view=view)
         
         # Schedule the event notification
-        events.append((utc_datetime, interaction.channel.id, self.poll_message.value, False, False))
+        events.append([utc_datetime, interaction.channel.id, self.poll_message.value, False, False])
         print(f"Event scheduled: {self.poll_message.value} at {utc_datetime} (UTC) / {combined_datetime} (CT)")
         await interaction.response.send_message("Poll created successfully.", ephemeral=True)
 
