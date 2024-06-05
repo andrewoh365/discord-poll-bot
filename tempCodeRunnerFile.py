@@ -1,27 +1,19 @@
 import discord
 from typing import Final, List
 import os
-import asyncio
-from discord.ext import commands, tasks
+from discord.ext import commands
 from dotenv import load_dotenv
 from discord import Intents, Message
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime
 
 # STEP 0: LOAD OUR TOKEN FROM SOMEWHERE SAFE
 load_dotenv()
 TOKEN: Final[str] = os.getenv("DISCORD_TOKEN")
 
 # STEP 1: BOT SETUP
-intents = Intents.default()
+intents: Intents = Intents.default()
 intents.message_content = True
 client = commands.Bot(command_prefix='.', intents=intents)
-
-# List to keep track of events
-events = []
-
-# Time zone
-CT = pytz.timezone('US/Central')
 
 # STEP 2: MESSAGE FUNCTIONALITY
 async def send_message(message: Message, user_message: str) -> None:
@@ -42,7 +34,6 @@ async def send_message(message: Message, user_message: str) -> None:
 @client.event
 async def on_ready() -> None:
     print(f'{client.user} has connected to Discord!')
-    check_events.start()  # Start the background task to check events
 
 # Define the buttons and voting logic
 class PollButtons(discord.ui.View):
@@ -92,23 +83,17 @@ class PollModal(discord.ui.Modal, title="Create Poll"):
             play_date = datetime.strptime(self.date.value, '%Y-%m-%d')
             play_time = datetime.strptime(self.time.value, '%H:%M')
             combined_datetime = datetime.combine(play_date, play_time.time())
-            combined_datetime = CT.localize(combined_datetime)
-            utc_datetime = combined_datetime.astimezone(pytz.utc)
         except ValueError:
             await interaction.response.send_message("Invalid date/time format. Please use 'YYYY-MM-DD' for the date and 'HH:MM' for the time.", ephemeral=True)
             return
 
         emb = discord.Embed(
             title="POLL",
-            description=f"{self.poll_message.value}\n\n**Proposed Time (CT):** {combined_datetime.strftime('%Y-%m-%d %H:%M %Z')}"
+            description=f"{self.poll_message.value}\n\n**Proposed Time:** {combined_datetime.strftime('%Y-%m-%d %H:%M')}"
         )
         poll_message = await interaction.channel.send(embed=emb)
         view = PollButtons(poll_message)
         await poll_message.edit(view=view)
-        
-        # Schedule the event notification
-        events.append((utc_datetime, interaction.channel.id, self.poll_message.value, False, False))
-        print(f"Event scheduled: {self.poll_message.value} at {utc_datetime} (UTC) / {combined_datetime} (CT)")
         await interaction.response.send_message("Poll created successfully.", ephemeral=True)
 
 class CreatePollButton(discord.ui.View):
@@ -122,37 +107,6 @@ class CreatePollButton(discord.ui.View):
 async def createpoll(ctx):
     view = CreatePollButton()
     await ctx.send("Click the button below to create a poll.", view=view)
-
-# Background task to check events
-@tasks.loop(seconds=30)
-async def check_events():
-    now = datetime.now(pytz.utc)
-    print(f"Checking events at {now}")
-    for event in events:
-        event_time, channel_id, event_name, reminder_sent, start_notified = event
-        time_until_event = (event_time - now).total_seconds()
-        print(f"Event '{event_name}' scheduled for {event_time} (UTC), which is in {time_until_event / 60:.2f} minutes.")
-        
-        if not reminder_sent and timedelta(minutes=9, seconds=30) <= event_time - now < timedelta(minutes=10):
-            channel = client.get_channel(channel_id)
-            if channel:
-                print(f"Sending reminder for event: {event_name} in channel {channel_id}")
-                await channel.send(f"Reminder: Event '{event_name}' is happening in 10 minutes!")
-                event[3] = True
-            else:
-                print(f"Channel {channel_id} not found.")
-        
-        if not start_notified and timedelta(seconds=-30) <= event_time - now < timedelta(seconds=30):
-            channel = client.get_channel(channel_id)
-            if channel:
-                print(f"Sending event start notification for event: {event_name} in channel {channel_id}")
-                await channel.send(f"The event '{event_name}' is starting now!")
-                event[4] = True
-            else:
-                print(f"Channel {channel_id} not found.")
-    
-    # Remove past events
-    events[:] = [event for event in events if event[0] > now]
 
 # STEP 4: HANDLING INCOMING MESSAGES
 @client.event
