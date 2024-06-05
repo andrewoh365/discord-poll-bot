@@ -1,6 +1,8 @@
 # discord-poll-bot
 -----REMOVE THE BOT TOKEN FIRST-----
 
-git add . <br />
-git commit -m "" <br />
+git add .
+
+git commit -m ""
+
 git push origin HEAD:main
