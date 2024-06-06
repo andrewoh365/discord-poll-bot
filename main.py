@@ -1,7 +1,6 @@
 import discord
 from typing import Final, List
 import os
-import asyncio
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from discord import Intents, Message
@@ -23,21 +22,7 @@ events = []
 # Time zone
 CT = pytz.timezone('US/Central')
 
-# STEP 2: MESSAGE FUNCTIONALITY
-async def send_message(message: Message, user_message: str) -> None:
-    if not user_message:
-        print('(Message was empty because intents were not enabled probably)')
-        return
-
-    is_private = user_message[0] == '?'
-    user_message = user_message[1:] if is_private else user_message
-
-    try:
-        await message.author.send(user_message) if is_private else await message.channel.send(user_message)
-    except Exception as e:
-        print(e)
-
-# STEP 3: HANDLING THE STARTUP FOR OUR BOT
+# STEP 2: HANDLING THE STARTUP FOR OUR BOT
 @client.event
 async def on_ready() -> None:
     print(f'{client.user} has connected to Discord!')
@@ -51,7 +36,7 @@ class PollButtons(discord.ui.View):
         self.yes_votes: List[int] = []  # Store user IDs
         self.no_votes: List[int] = []
 
-    @discord.ui.button(label="✅ Yes", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="👍 Yes", style=discord.ButtonStyle.green)
     async def thumbs_up(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id not in self.yes_votes:
             self.yes_votes.append(interaction.user.id)
@@ -59,7 +44,7 @@ class PollButtons(discord.ui.View):
                 self.no_votes.remove(interaction.user.id)
             await self.update_poll_message(interaction)
 
-    @discord.ui.button(label="❌ No", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="👎 No", style=discord.ButtonStyle.danger)  # Change the color for better visibility
     async def thumbs_down(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id not in self.no_votes:
             self.no_votes.append(interaction.user.id)
@@ -75,8 +60,8 @@ class PollButtons(discord.ui.View):
             title=self.message.embeds[0].title,
             description=self.message.embeds[0].description
         )
-        updated_embed.add_field(name="✅ Yes", value=yes_votes, inline=False)
-        updated_embed.add_field(name="❌ No", value=no_votes, inline=False)
+        updated_embed.add_field(name="👍 Yes", value=yes_votes, inline=False)
+        updated_embed.add_field(name="👎 No", value=no_votes, inline=False)
 
         await self.message.edit(embed=updated_embed)
         await interaction.response.send_message("Your vote has been counted.", ephemeral=True)
@@ -87,9 +72,16 @@ class PollButtons(discord.ui.View):
                 event[5] = self.yes_votes
 
 class PollModal(discord.ui.Modal, title="Create Poll"):
+    poll_message = discord.ui.TextInput(label="Poll Title", style=discord.TextStyle.paragraph, max_length=200)
     date = discord.ui.TextInput(label="Date (YYYY-MM-DD)", style=discord.TextStyle.short)
     time = discord.ui.TextInput(label="Time (HH:MM)", style=discord.TextStyle.short)
-    poll_message = discord.ui.TextInput(label="Poll Message", style=discord.TextStyle.paragraph, max_length=200)
+
+    def __init__(self, *args, poll_message_value="", date_value="", time_value="", error_message="", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.poll_message.default = poll_message_value
+        self.date.default = date_value
+        self.time.default = time_value
+        self.error_message = error_message
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
@@ -99,11 +91,17 @@ class PollModal(discord.ui.Modal, title="Create Poll"):
             combined_datetime = CT.localize(combined_datetime)
             utc_datetime = combined_datetime.astimezone(pytz.utc)
         except ValueError:
-            await interaction.response.send_message("Invalid date/time format. Please use 'YYYY-MM-DD' for the date and 'HH:MM' for the time.", ephemeral=True)
+            modal = PollModal(
+                poll_message_value=self.poll_message.value,
+                date_value=self.date.value,
+                time_value=self.time.value,
+                error_message="Invalid date/time format. Please use 'YYYY-MM-DD' for the date and 'HH:MM' for the time."
+            )
+            await interaction.response.send_modal(modal)
             return
 
         emb = discord.Embed(
-            title="POLL",
+            title="EVENT/POLL",
             description=f"{self.poll_message.value}\n\n**Proposed Time (CT):** {combined_datetime.strftime('%Y-%m-%d %H:%M %Z')}"
         )
         poll_message = await interaction.channel.send(embed=emb)
@@ -114,6 +112,10 @@ class PollModal(discord.ui.Modal, title="Create Poll"):
         events.append([utc_datetime, interaction.channel.id, self.poll_message.value, False, False, []])
         print(f"Event scheduled: {self.poll_message.value} at {utc_datetime} (UTC) / {combined_datetime} (CT)")
         await interaction.response.send_message("Poll created successfully.", ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        if isinstance(error, discord.ext.commands.CommandError):
+            await interaction.response.send_modal(self)
 
 class CreatePollButton(discord.ui.View):
     @discord.ui.button(label="Create Poll", style=discord.ButtonStyle.primary)
@@ -154,7 +156,8 @@ async def check_events():
         time_until_event = (event_time - now).total_seconds()
         print(f"Event '{event_name}' scheduled for {event_time} (UTC), which is in {time_until_event / 60:.2f} minutes.")
         
-        if not reminder_sent and timedelta(minutes=9, seconds=30) <= event_time - now < timedelta(minutes=10):
+        # Send reminder exactly 10 minutes before the event
+        if not reminder_sent and timedelta(minutes=10, seconds=-15) <= event_time - now <= timedelta(minutes=10, seconds=15):
             channel = client.get_channel(channel_id)
             if channel:
                 mentions = ' '.join([f"<@{user_id}>" for user_id in participants])
@@ -164,7 +167,8 @@ async def check_events():
             else:
                 print(f"Channel {channel_id} not found.")
         
-        if not start_notified and timedelta(seconds=-30) <= event_time - now < timedelta(seconds=30):
+        # Send notification exactly at the event time
+        if not start_notified and timedelta(seconds=-15) <= event_time - now <= timedelta(seconds=15):
             channel = client.get_channel(channel_id)
             if channel:
                 mentions = ' '.join([f"<@{user_id}>" for user_id in participants])
@@ -183,12 +187,6 @@ async def on_message(message: Message) -> None:
     if message.author == client.user:
         return
 
-    username: str = str(message.author)
-    user_message: str = str(message.content)
-    channel: str = str(message.channel)
-
-    print(f'[{channel}] {username}: {user_message}')
-    await send_message(message, user_message)
     await client.process_commands(message)
 
 # STEP 5: MAIN ENTRY POINT
